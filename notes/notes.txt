@@ -1,0 +1,26 @@
+
+NOTES:
+
+
+Tensor analysis reveals distinct population structure that parallels different computational roles of areas M1 and V1
+Seely et al., 2016, PLOS Comp.Biol.
+
+- temporal structure of neuron firing patterns has 2+ non-exclusive sources:
+	1. responses (dynamic over time or not) to external variables
+	2. internal population dynamics 
+	temporal population firing rates = [pop dynamics, external variables] * [w1 ; w2]'
+	
+- for e.g., studies focus on M1 encoding external variables (e.g. muscle forces, torques, reach direction, limb velocity), and others repor evidence for temporal structure reflecting evolution of internal population dynamics
+- chiefly, internal population dynamics are evident as consistent temporal structure across conditons (e.g. similar temporal responses across arm reaching conditions even when reaching to different target requiring different patterns of muscle activities)
+- reflecting external variables = encoding
+- M1 is good example of the need for the ability to infer predominant origin of time-varying neural pop. resposnes
+
+- tuning for external variables will constrain structure across neurons (assuming little effect of temporal dynamics that occur as result of input of external variable)
+- internal dynamics constrains structure across conditions-> if responses evolve similarly across conditions over time, responses will have more limited degrees of freedom across conditions
+- preferred mode (neuron or condition) is the mode from which the data matrix (Neurons x Conditions x Time) can be accurately reconstructed with smallest no. of basis elements (basis neurons or basis conditions)
+
+- analyzed datasets from V1 (considered to be driven by external inputs- hypothesized to be neuron-mode) and M1 (hypothesized to be condition-mode)
+- for data, each neuron's resposes were averaged across trials within a condition and smoothed to produce firing rate as function of time
+- simultaneous or sequential nature of recording was inconsisquentical (doesn't matter)
+- M1 and V1 data was statistically reliable (assessed by width of of standard error bars per neuron- but not shown)
+- population response is not clear from analyzing single neurons

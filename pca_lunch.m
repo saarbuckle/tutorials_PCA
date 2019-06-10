@@ -563,6 +563,7 @@ switch what
         % data variance)
         [D,si] = sort(abs(diag(D)),1,'descend');    % sort eigenvalues on size (larger values = more variance along this vector)
         V      = V(:,si);                           % apply same reordering to eigenvectors
+        U      = U(:,si);
         Xproj  = bsxfun(@times,U,diag(S)');         % calculate projection data (Xproj)- data projected to PCs. Equal to Xc*V;
         Xrecon = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'+Xmu; % calculate reduced data (Xrecon)- in original data space (note V' = V^-1 for eigenvectors)
         varExp = 100*D/sum(D);                      % calculate % of total variance explained by each PC
@@ -1306,6 +1307,227 @@ switch what
     
     case '0' % ------------ CASES IN DEVELOPMENT --------------------------
     case '0' % ------------ cases to simulate temporal patterns -----------       
+    case 'MAKE:temporalData'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % Generates temporal data for a population of measurement channels.
+        % Since this example is more complex, it's more realistic to use
+        % more than 2 conditions. Specifically, this case is used to
+        % examine populations that either encode external variables
+        % (inputs), or execute some process that is well-captured by a
+        % discrete linear transformation (autonomous linear-dynamical system).
+        %
+        % Given initial state data X (an NxC data matrix), this case
+        % returns X (NxCxT), where T is number of timepoints.
+        %
+        % To estimate temporal data:
+        %   x(t+1,:) = a*A*x(t,:) + b*B*u(t,:)
+        % 
+        % where the next state (Xt+1) is a function of a dynamical
+        % transofrmation (A*Xt) plus the tuning (B) to the initial input
+        % (u). a and b are weights that can be altered by user input to
+        % influence how "dynamical" (a) or "encody" (b) a system is.
+        % 
+        % Much of this work is inspired and explained by Seely et al.
+        % (2016) PLoS Comp.Biol.
+        %       https://doi.org/10.1371/journal.pcbi.1005164
+        %
+        % inputs:
+        %       varargin{1} : U data matrix [NxC], initial input to system 
+        %                       (generate with 'SIM:mvnrndExact')
+        %       varargin{2} : a, scalar that defines how "dynamical" the
+        %                       system is (a>=0)
+        %       varargin{3} : b, scalar that defines how "encody" the
+        %                       system is (b>=0)
+        %       varargin{4} : T, number of timepoints to generate data for
+        %                       (optional) default = 100
+        %       varargin{5} : A, discrete transformation matrix applied to
+        %       (optional)      each timestep. Effect at each timestep is 
+        %                       weighted by a.
+        %                       If not explicitly defined, a random
+        %                       transformation matrix is generated where
+        %                       each condition transform is orthogonal
+        %       varargin{6} : B, input weighting matrix [NxC]. Maps U onto X.
+        %       (optional)      Effect at each timestep is weighted by b.
+        %                       If not explicitly defined, a random
+        %                       weighting matrix is generated and used.
+        %       
+        % output:
+        %       varargout{1} : X - [NxCxT] data matrix
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        T = 100;         % 100 timepoints (default)
+        U = varargin{1}; % initial state
+        a = varargin{2}; % 0:1 scalar that defines how "dynamical" the system is
+        b = varargin{3}; % 0:1 scalar that defines how "encody" the system is
+        if numel(varargin)>3
+            % did user explicitly define number of timepoints?
+            T = varargin{4};
+        end
+        % housekeeping
+        [N,C]    = size(U);     % get number of neurons and components
+        X        = nan(N,C,T);  % preallocate space for generated temporal data
+        % Explicit definition of A and B:
+        % A will be an arbitrary linear transformation matrix
+        if numel(varargin)>4
+            A = varargin{5};
+        else
+            A = unifrnd(0,1,N,N);
+            E = A*A';
+            A = E^(-0.5)*A;
+            % make discrete rotational transform
+%             Al = tril(A,-1);
+%             Au = -Al';
+%             A  = Al + Au;
+            A  = A./T;
+        end
+        if numel(varargin)>5
+            B = varargin{6};  
+        else
+            B = unifrnd(0,1,N,C);
+            B = B./T;
+        end
+        X(:,:,1) = B*U;    % assign input to first temporal state (weight b is not applied because system needs some sort of input)
+        % generate data
+        for t = 1:T-1
+            X(:,:,t+1) = a*A*X(:,:,t) + b*B*U;
+            if sum(sum(isnan(X(:,:,t+1))))
+                keyboard
+            end
+        end
+        varargout = {X};
+    
+    case 'TENSOR:prepData'
+        % Case applies firing rate normalization and removes
+        % cross-condition mean from each neuron for each timepoint.
+        X = varargin{1}; % [N x C x T] data matrix
+        % 1. housekeeping
+        [numNeurons,numConds,numTime] = size(X);
+        % 2. soft normalize firing rates to ensure analysis is not
+        % dominated by a few loud neurons
+        softFactor  = 5;
+        F           = permute(X,[3,2,1]);
+        F           = reshape(F,numTime*numConds,numNeurons); % append conditions vertically [CT x N]
+        ranges      = range(F);  % For each neuron, the firing rate range across all conditions and times.
+        normFactors = (ranges+softFactor);
+        F = bsxfun(@times, F, 1./normFactors);  % normalize
+        F = reshape(F,numTime,numConds,numNeurons);
+        X = permute(F,[3,2,1]); % return to original dimensions: [NxCxT]
+        % 3. remove cross-condition mean [1 x T] from each neurons response
+        meanX = mean(X,2);
+        X     = X - repmat(meanX,1,numConds,1); % check with mean(X,2)
+        varargout = {X};
+    case 'TENSOR:neuronMode'
+        X = varargin{1}; % [N x C x T] data matrix
+        % housekeeping
+        [numNeurons,numConds,numTime] = size(X);
+        % reshape data tensor into condition unfolding:
+        % - [N x CT] : neurons are rows - here we find neuron-mode (Nm) ***
+        % - [C x NT] : conditions are rows- here we find condition-mode (Cm) 
+        Nm = reshape(X,numNeurons,numConds*numTime);
+        
+        % do PCA:
+        [U,S,V] = svd(Nm,'econ');
+        [~,si]  = sort(abs(diag(S.^2)),1,'descend');   % sort eigenvalues on size
+        V       = V(:,si);                             % apply same reordering to eigenvectors
+        U       = U(:,si);
+        
+        % Now, do reconstruction with basis-conditions
+        R2 = []; % preallocate R2 to describe condition reconstruction fits
+        % precalculate total sums of squares across conditions for R2 calc.
+        tss = permute(X,[2,1,3]); 
+        tss = reshape(tss,numConds,numNeurons*numTime);
+        tss = diag(tss*tss')';
+        % loop through possible sizes of k (k=num latent components, max is
+        % the minimum size of numNeurons & numConds)
+        for k = 1:min([numConds,numNeurons])
+            % neuron-mode reconstruction
+            Xr = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'; 
+            Xr = reshape(Xr,numNeurons,numConds,numTime);
+            % calculate reconstruction error per condition with basis-neurons
+            res = X - Xr;                                      % diff b/t reconstruction and original unfolded neuron data
+            res = permute(res,[2,1,3]);                        % permute error matrix so it is [C x N x T]
+            res = reshape(res,numConds,numNeurons*numTime);    % reshape error matrix so it is [C x NT]
+            rss = diag(res*res')';                             % calculate error per condition over time
+            % compute R2 per condition
+            R2(k,:) = 1-rss./tss;
+        end
+        varargout = {R2};   
+    case 'TENSOR:conditionMode'
+        X = varargin{1}; % [N x C x T] data matrix
+        % housekeeping
+        [numNeurons,numConds,numTime] = size(X);
+        % reshape data tensor into condition unfolding:
+        % - [N x CT] : neurons are rows - here we find neuron-mode (Nm)
+        % - [C x NT] : conditions are rows- here we find condition-mode (Cm) ***
+        Cm = permute(X,[2,1,3]);
+        Cm = reshape(Cm,numConds,numNeurons*numTime);
+        
+        % do PCA:
+        [U,S,V] = svd(Cm,'econ');
+        [~,si]  = sort(abs(diag(S.^2)),1,'descend');   % sort eigenvalues on size
+        V      = V(:,si);                              % apply same reordering to eigenvectors
+        U      = U(:,si);
+        
+        % Now, do reconstruction with basis-conditions
+        R2 = []; % preallocate R2 to describe condition reconstruction fits
+        % precalculate total sums of squares across conditions for R2 calc.
+        tss = permute(X,[2,1,3]); 
+        tss = reshape(tss,numConds,numNeurons*numTime);
+        tss = diag(tss*tss')';
+        % loop through possible sizes of k (k=num latent components, max is
+        % the minimum size of numNeurons & numConds)
+        for k = 1:min([numConds,numNeurons])
+            % condition-mode reconstruction
+            Xr = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'; 
+            Xr = reshape(Xr,numConds,numNeurons,numTime);
+            Xr = permute(Xr,[2,1,3]);
+            % calculate reconstruction error per condition with
+            % basis-conditions
+            res = X - Xr;                                     % diff b/t reconstruction and original unfolded neuron data
+            res = permute(res,[2,1,3]);                      % permute error matrix so it is [C x N x T]
+            res = reshape(res,numConds,numNeurons*numTime);  % reshape error matrix so it is [C x NT]
+            rss = diag(res*res')';                          % calculate error per condition over time
+            % compute R2 per condition
+            R2(k,:) = 1-rss./tss;
+        end
+        varargout = {R2};   
+    
+    case 'DO:tensorAnalysis'
+        % generate initial inputs to system
+        N = 10;
+        C = N;
+        G = eye(N);
+        U = pca_lunch('SIM:mvnrndExact',G,10,1);
+        T = 100; % no. timepoints
+        % make A and B
+        A = unifrnd(0,1,N,N);
+        E = A*A';
+        A = E^(-0.5)*A;
+        % make discrete rotational transform
+        Al = tril(A,-1);
+        Au = -Al';
+        A  = Al + Au;
+        A  = A./T;
+        B = unifrnd(0,1,N,C);
+        B = B./T;
+        % 1. generate temporal data
+        Xn = pca_lunch('MAKE:temporalData',U,0,1,T,A,B); % more "encody"
+        Xc = pca_lunch('MAKE:temporalData',U,1,0,T,A,B); % more "dynamical"
+        % 2. preprocess temporal data
+        Xnp = pca_lunch('TENSOR:prepData',Xn);
+        Xcp = pca_lunch('TENSOR:prepData',Xc);
+        % 3. do tensor analysis along both unfoldings (condition, neuron)
+        % with "encody" data
+        nr2 = pca_lunch('TENSOR:neuronMode',Xnp);
+        cr2 = pca_lunch('TENSOR:neuronMode',Xnp);
+        [mean(cr2,2) mean(nr2,2)];
+        ans(:,1)./ans(:,2)
+        % 4. do tensor analysis along both unfoldings (condition, neuron)
+        % with "dynamical" data
+        nr2 = pca_lunch('TENSOR:neuronMode',Xcp);
+        cr2 = pca_lunch('TENSOR:neuronMode',Xcp);
+        [mean(cr2,2) mean(nr2,2)];
+        ans(:,1)./ans(:,2)
+        
     case 'MAKE:temporal'
         % Wrapper function to generate responses for each measurement
         % channel for T timesteps.
@@ -1325,6 +1547,7 @@ switch what
         type = varargin{1};  % pattern type
         T    = varargin{2};  % number of timepoints
         A    = varargin{3};  % transformation matrix to generate last timestep
+        B    = [];
         
         % generate responses at time 1
         switch type
