@@ -943,6 +943,13 @@ switch what
             D(:,i) = d;
         end
         varargout = {V,D};   
+    case 'SIM:transformA'
+        N  = varargin{1}; % number of measurement channels
+        dD = varargin{2}; % intrinsic dimensionality of transformation at each timestep
+        A = randn(N,dD)*randn(dD,N)+10*eye(N);
+        A = real(orth(A)^(1/10));       % make components orthogonal (and det==1)
+        varargout = {A};
+        
     case '0' % ------------ miscellaneous cases for functionality ---------
     case 'MISC:covariance'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1154,7 +1161,10 @@ switch what
         xlims = xlim;
         ylims = ylim;
         hold on
-        if numC==2
+        if numC==1
+            % draw line along X-axis only
+            line(xlims',[0;0],'Color',clr{1},'LineWidth',ax_width);
+        elseif numC==2
             % draw lines
             line(xlims',[0;0],'Color',clr{1},'LineWidth',ax_width);
             line([0;0],ylims','Color',clr{2},'LineWidth',ax_width);
@@ -1320,7 +1330,7 @@ switch what
         % returns X (NxCxT), where T is number of timepoints.
         %
         % To estimate temporal data:
-        %   x(t+1,:) = a*A*x(t,:) + b*B*u(t,:)
+        %   x(:,:,t+1) = a*A*x(:,:,t) + b*B*u(:,:,t)
         % 
         % where the next state (Xt+1) is a function of a dynamical
         % transofrmation (A*Xt) plus the tuning (B) to the initial input
@@ -1334,62 +1344,58 @@ switch what
         % inputs:
         %       varargin{1} : U data matrix [NxC], initial input to system 
         %                       (generate with 'SIM:mvnrndExact')
-        %       varargin{2} : a, scalar that defines how "dynamical" the
-        %                       system is (a>=0)
-        %       varargin{3} : b, scalar that defines how "encody" the
-        %                       system is (b>=0)
-        %       varargin{4} : T, number of timepoints to generate data for
-        %                       (optional) default = 100
-        %       varargin{5} : A, discrete transformation matrix applied to
-        %       (optional)      each timestep. Effect at each timestep is 
+        %       varargin{2} : A, discrete transformation matrix applied to
+        %                       each timestep. Effect at each timestep is 
         %                       weighted by a.
-        %                       If not explicitly defined, a random
-        %                       transformation matrix is generated where
-        %                       each condition transform is orthogonal
-        %       varargin{6} : B, input weighting matrix [NxC]. Maps U onto X.
-        %       (optional)      Effect at each timestep is weighted by b.
-        %                       If not explicitly defined, a random
-        %                       weighting matrix is generated and used.
-        %       
+        %                       Can be generated using 'SIM:transformA'
+        %       varargin{3} : B, input weighting matrix [NxC]. Maps U onto X.
+        %                       Effect at each timestep is weighted by b.
+        %       varargin{4} : a, scalar that defines how "dynamical" the
+        %                       system is (a>=0)
+        %       varargin{5} : b, scalar that defines how "encody" the
+        %                       system is (b>=0)
+        %       varargin{6} : T, number of timepoints to generate data for
+        %                       (optional) default = 100 
         % output:
         %       varargout{1} : X - [NxCxT] data matrix
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        
+        % GET INPUTS
         T = 100;         % 100 timepoints (default)
         U = varargin{1}; % initial state
-        a = varargin{2}; % 0:1 scalar that defines how "dynamical" the system is
-        b = varargin{3}; % 0:1 scalar that defines how "encody" the system is
-        if numel(varargin)>3
-            % did user explicitly define number of timepoints?
-            T = varargin{4};
-        end
-        % housekeeping
-        [N,C]    = size(U);     % get number of neurons and components
-        X        = nan(N,C,T);  % preallocate space for generated temporal data
-        % Explicit definition of A and B:
-        % A will be an arbitrary linear transformation matrix
-        if numel(varargin)>4
-            A = varargin{5};
-        else
-            A = unifrnd(0,1,N,N);
-            E = A*A';
-            A = E^(-0.5)*A;
-            % make discrete rotational transform
-%             Al = tril(A,-1);
-%             Au = -Al';
-%             A  = Al + Au;
-            A  = A./T;
-        end
+        A = varargin{2}; % discrete linear transformation matrix applied to each timestep
+        B = varargin{3}; % input to neuron mapping matrix (specifies tuning of each neuron to each input)
+        a = varargin{4}; % 0:1 scalar that defines how "dynamical" the system is
+        b = varargin{5}; % 0:1 scalar that defines how "encody" the system is
         if numel(varargin)>5
-            B = varargin{6};  
-        else
-            B = unifrnd(0,1,N,C);
-            B = B./T;
+            % did user explicitly define number of timepoints?
+            T = varargin{6};
         end
-        X(:,:,1) = B*U;    % assign input to first temporal state (weight b is not applied because system needs some sort of input)
-        % generate data
+        
+        % HOUSEKEEPING
+        [N,C] = size(B);
+        t     = size(U,3);     % get number of neurons and components
+        % check if input signals vary over time:
+        if t==1
+            % input signals are constant across time
+            U = repmat(U,1,1,T);
+        elseif t~=1 && t~=T
+            % input signals change at each timepoint but user did not
+            % specify input for all timesteps
+            error('Input signals change at each timestep, but inputs for all timesteps are not defined ->  T~=(U,3)')
+        end
+        
+        % MAKE DATA
+        X        = nan(N,C,T);  % preallocate data tensor
+        X(:,:,1) = B*U(:,:,1);  % assign input to first temporal state
+        % * Note in the above line, weight b is not applied because system 
+        % needs some sort of input to start a process (i.e. dynamic process
+        % needs input to start)
         for t = 1:T-1
-            X(:,:,t+1) = a*A*X(:,:,t) + b*B*U;
-            if sum(sum(isnan(X(:,:,t+1))))
+            % generate data for each timestep
+            X(:,:,t+1) = a*A*X(:,:,t) + b*B*U(:,:,t);
+            if any(isnan(X(:,:,t+1)))
+                warning('nans in data: check A, B, and U')
                 keyboard
             end
         end
@@ -1493,40 +1499,77 @@ switch what
     
     case 'DO:tensorAnalysis'
         % generate initial inputs to system
-        N = 10;
-        C = N;
-        G = eye(N);
-        U = pca_lunch('SIM:mvnrndExact',G,10,1);
-        T = 100; % no. timepoints
-        % make A and B
-        A = unifrnd(0,1,N,N);
-        E = A*A';
-        A = E^(-0.5)*A;
-        % make discrete rotational transform
-        Al = tril(A,-1);
-        Au = -Al';
-        A  = Al + Au;
-        A  = A./T;
-        B = unifrnd(0,1,N,C);
-        B = B./T;
-        % 1. generate temporal data
-        Xn = pca_lunch('MAKE:temporalData',U,0,1,T,A,B); % more "encody"
-        Xc = pca_lunch('MAKE:temporalData',U,1,0,T,A,B); % more "dynamical"
-        % 2. preprocess temporal data
-        Xnp = pca_lunch('TENSOR:prepData',Xn);
-        Xcp = pca_lunch('TENSOR:prepData',Xc);
-        % 3. do tensor analysis along both unfoldings (condition, neuron)
-        % with "encody" data
-        nr2 = pca_lunch('TENSOR:neuronMode',Xnp);
-        cr2 = pca_lunch('TENSOR:neuronMode',Xnp);
-        [mean(cr2,2) mean(nr2,2)];
-        ans(:,1)./ans(:,2)
-        % 4. do tensor analysis along both unfoldings (condition, neuron)
-        % with "dynamical" data
-        nr2 = pca_lunch('TENSOR:neuronMode',Xcp);
-        cr2 = pca_lunch('TENSOR:neuronMode',Xcp);
-        [mean(cr2,2) mean(nr2,2)];
-        ans(:,1)./ans(:,2)
+        N  = 10;                                  % no. measurement channels ("neurons")
+        T  = 100;                                 % no. timepoints
+        dS = 5;                                   % intrinsic dimensionality of the input signal (here this is akin to the number of conditions, but not always true)
+        dD = floor(N/2);                          % intrinsic dimensionality of the dynamics
+        % make input signals that vary at each timestep (this variation is not in a structured manner)
+        U = nan(dD,dS,T);
+        for t = 1:T
+            U(:,:,t) = pca_lunch('SIM:mvnrndExact',eye(dS),dS,1); % generate exactly independent data - these are the input signals U
+        end
+        
+        % define the discrete linear transform matrix A (randomly define)
+        A = pca_lunch('SIM:transformA',N,dD);
+        % define the input to measurement channel weighting matrix
+        B = randn(N,dS);
+        % assign weights for how input driven & dynamical the system will be:
+        a = [0:0.05:1];
+        b = fliplr(a);
+        % check a and b are same size
+        numWeights = length(a);
+        if numWeights~=length(b)
+            error('a and b are not the same size')
+        end
+        % Do reconstruction using neuron-unfolding and condition-unfolding
+        r2 = nan(min([dS,dD]),2,length(a)); % preallocate array for reconstruction fits
+        ratio = nan(numWeights,1);
+        label = {};
+        for i = 1:numWeights
+            % generate data with the same matrices and inputs, but change
+            % the weights. This is important- we are only changing the
+            % weights on each loop, NOT the input data, NOT the weight
+            % matrix B, and NOT the discrete transformation matrix A.
+            X = pca_lunch('MAKE:temporalData',U,A,B,a(i),b(i),T); 
+            X = pca_lunch('TENSOR:prepData',X); % preprocess data
+            % do the reconstruction along different tensor unfoldings of X
+            condR2   = pca_lunch('TENSOR:conditionMode',X);
+            neuronR2 = pca_lunch('TENSOR:neuronMode',X);
+            % avg. reconstruction fits across conditions
+            r2(:,1,i) = mean(condR2,2);
+            r2(:,2,i) = mean(neuronR2,2);
+            % take the ratio of the reconstruction with the first (best) PC
+            % Here it is the log ratio such that a ratio of 1 (equal fits
+            % using either basis-neurons or basis-conditions) will be zero.
+            ratio(i)  = log(r2(1,1,i) / r2(1,2,i));
+                % ratios >0 indicate better fit with basis-conditions (i.e.
+                % system exhibits stronger dynamical properties)
+                
+            % make some labels for plotting later
+            label{end+1} = sprintf('a=%0.2f\n\nb=%0.2f',a(i),b(i));
+        end
+        
+        % plot fits:
+        figure('Color',[1 1 1]);
+        % plot the weights we used to make the datasets 
+        subplot(2,1,1);
+        imagesc([a;b]);
+        colormap hot
+        xlabel('dataset');
+        set(gca,'ytick',[1 2],'yticklabel',{'input weight','dynamics weight'});
+        info = get(gca); info.YAxis.FontSize = 14;
+        % plot ratio of fits using first PC only across data made with
+        % varying weights
+        subplot(2,1,2);
+        plot(ratio,'o-k','LineWidth',1.5);
+        pca_lunch('PLOT:drawlines',1,[0.7 0.7 0.7]);
+        xlabel('dataset');
+        ylabel('log( r2 condition mode / r2 neuron mode )');
+        title('estimating the mode of each dataset');
+        xlim([0.5 numWeights+0.5]);
+        text(1:numWeights,ratio,label);
+        
+        
         
     case 'MAKE:temporal'
         % Wrapper function to generate responses for each measurement
