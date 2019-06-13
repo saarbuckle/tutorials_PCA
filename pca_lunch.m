@@ -390,6 +390,201 @@ switch what
         subplot(1,3,3); imagesc(abs(corr(PC1,PC2))); title('Corr across SVD & EIG PCs'); caxis([0 1]);
                 % abs of correlations because signs might change between
                 % eig and svd (the signs are superfluous)
+    
+    case 'DO:tensorAnalysis'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % WRAPPER CASE TO DO A SET OF THINGS:
+        % Makes temporal dataset X (N x C x T), where X is characterized
+        % (to some variable degree) by a dynamic transformation A and
+        % time-variable inputs B*U:
+        %
+        %        x(:,:,t+1) = a*A*x(:,:,t) + b*B*u(:,:,t)
+        %
+        % where a and b are weights applied to the dynamical and
+        % input-driven components of the data. 
+        %
+        % In this case, we generate temporal data with the same A, B, and
+        % U, but we make 3 datasets:
+        %   1. A dynamics only system
+        %   2. An input-driven system
+        %   3. An input-driven system where inputs don't change.
+        %
+        % With these datasets, we then apply PCA along the neuron-unfolding
+        % and condition-unfolding of the data tensors (tensors are 3+
+        % dimensional matrices where the dimensions are different units).
+        % Unfolding the tensor X (NxCxT) along the neuron-mode results in a
+        % reshaped matrix Xr (NxCT). Applying PCA via svd to the reshaped
+        % matrix Xr will thus find "basis-neurons" (1xCT or CxT). These
+        % neurons will demonstrate input-driven features of the data, and
+        % importantly, will not capture any dynamic features in the data
+        % that exist across conditions. 
+        %
+        % Alternatively, we can unfold X (NxCxT) along the condition-mode,
+        % resulting in another rehaped matrix Xr (CxNT). Applying PCA via
+        % svd to Xr now yeilds a set of "basis-conditions" (1xNT or NxT),
+        % which characterizes a dynamical transform that exists across
+        % neurons and times and is shared acorss a set of conditions. Multi
+        % basis-conditions could also suggest that there are different
+        % dynamics at play for subsets of conditions (e.g. perhaps
+        % different categories of images initiate dynamical processes that
+        % evolve with different A).
+        %       * I think that last point is correct, but I haven't tested
+        %       it.
+        %
+        % These unfolding analyses are from: 
+        % Seely et al. (2016). https://doi.org/10.1371/journal.pcbi.1005164
+        %
+        % After finding the basis-conditions and basis-neurons for each
+        % dataset, we ask how well these bases can reconstruct the data.
+        % Reconstruction fit is equaluated as the mean R2 across conditions
+        % (same results hold if we use mean R2 across neurons). For
+        % practical purposes, I'm plotting only the fits using the first
+        % top basis neuron or basis condition. I take the log of the ratio 
+        % of these fits and plot them, such that a value of 0 indicates
+        % similar reconstruction ability using either basis neurons or
+        % conditions, values above 0 indicate the system is more dynamic,
+        % and vice versa.
+        %
+        % Important to note, a and b range between 0 and 1. The ratio
+        % between these two weights might not exactly relate to the degree
+        % to which a system exhibits strong/weak dynamics. Larger values of
+        % a will indeed mean there are more dynamics, but input-driven
+        % effects on the data are stronger than dynamic effects even when
+        % a==b. 
+        %
+        % no inputs, no outputs
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        
+        % generate initial inputs to system
+        [U,A,B] = pca_lunch('MISC:temporalDataPrep');
+        [~,C,T] = size(U);
+        N       = size(A,1);
+        % assign weights for how input driven & dynamical the system will be:
+        a = [1,0,0];
+        b = [0,1,1];
+        numWeights = numel(a);
+        % generate the datasets:
+        X{1} = pca_lunch('SIM:temporalData',U,A,B,1,0,T);         % make fully dynamic system
+        X{2} = pca_lunch('SIM:temporalData',U,A,B,0,1,T);         % make fully input-driven system
+        X{3} = pca_lunch('SIM:temporalData',U(:,:,1),A,B,0,1,T);  % make fully input-driven where input doesn't change
+        % Do reconstruction using neuron and condition modes, assess fits
+        r2 = nan(min([N,C]),2,length(a)); % preallocate array for reconstruction fits
+        ratio = nan(numWeights,1);
+        for i = 1:numWeights
+            Xp = pca_lunch('TENSOR:prepData',X{i});                 % preprocess data
+            % do the reconstruction along different tensor unfoldings of X
+            condR2   = pca_lunch('TENSOR:conditionMode',Xp); % condition-mode reconstruction
+            neuronR2 = pca_lunch('TENSOR:neuronMode',Xp);    % neuron-mode reconstruction
+            % avg. reconstruction fits across conditions
+            r2(:,1,i) = mean(condR2,2);
+            r2(:,2,i) = mean(neuronR2,2);
+            % take the ratio of the reconstruction with the first (best) PC
+            % Here it is the log ratio such that a ratio of 1 (equal fits
+            % using either basis-neurons or basis-conditions) will be zero.
+            ratio(i)  = log(r2(1,1,i) / r2(1,2,i));
+                % ratios >0 indicate better fit with basis-conditions (i.e.
+                % system exhibits stronger dynamical properties)
+        end
+        
+        % plot
+        figure('Color',[1 1 1]);
+        % plot trajectories through PC ("neural state") space
+        subplot(2,3,1); pca_lunch('PLOT:trajectory',X{1}); title('1: dynamic system');
+        subplot(2,3,2); pca_lunch('PLOT:trajectory',X{2}); title('2: input-driven system, input changes');
+        subplot(2,3,3); pca_lunch('PLOT:trajectory',X{3}); title('3: input-driven, input stable');
+        % plot a and b weights of each dataset:
+        subplot(2,3,4); pca_lunch('PLOT:temporalWeights',a,b);
+        % plot reconstruction fits
+        subplot(2,3,5); 
+        label = {'  dynamic system','  input-driven',sprintf('  input-driven\n  stable input')};
+        pca_lunch('PLOT:tensorFitRatios',ratio,label); 
+        ylim([-1 1]);
+        % plot tangling measure for each dataset
+        subplot(2,3,6);
+        title('tangling: TO DO');
+        Q1 = pca_lunch('MISC:calcTangling',X{1});
+        Q2 = pca_lunch('MISC:calcTangling',X{2});
+        Q3 = pca_lunch('MISC:calcTangling',X{3});
+        keyboard
+        
+    case 'DO:tensorAnalysisMultiWeights'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % WRAPPER CASE TO DO A SET OF THINGS:
+        % Makes temporal dataset X (N x C x T), where X is characterized
+        % (to some variable degree) by a dynamic transformation A and
+        % time-variable inputs B*U:
+        %
+        %        x(:,:,t+1) = a*A*x(:,:,t) + b*B*u(:,:,t)
+        %
+        % where a and b are weights applied to the dynamical and
+        % input-driven components of the data. 
+        %
+        % In this case, we generate temporal data with the same A, B, and
+        % U, but we vary the weights a and b.
+        %
+        % With these datasets, we then apply PCA along the neuron-unfolding
+        % and condition-unfolding of the data tensors. 
+        %
+        % Important to note, a and b range between 0 and 1. The ratio
+        % between these two weights might not exactly relate to the degree
+        % to which a system exhibits strong/weak dynamics. Larger values of
+        % a will indeed mean there are more dynamics, but input-driven
+        % effects on the data are stronger than dynamic effects even when
+        % a==b. 
+        %
+        % no inputs, no outputs
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        
+        % generate initial inputs to system
+        [U,A,B] = pca_lunch('MISC:temporalDataPrep');
+        [~,C,T] = size(U);
+        N       = size(A,1);
+        % assign weights for how input driven & dynamical the system will be:
+        a = [0:0.05:1];
+        b = fliplr(a);
+        % check a and b are same size
+        numWeights = length(a);
+        if numWeights~=length(b)
+            error('a and b are not the same size')
+        end
+        % Do reconstruction using neuron-unfolding and condition-unfolding
+        r2 = nan(min([N,C]),2,length(a)); % preallocate array for reconstruction fits
+        ratio = nan(numWeights,1);
+        label = {};
+        for i = 1:numWeights
+            % generate data with the same matrices and inputs, but change
+            % the weights. This is important- we are only changing the
+            % weights on each loop, NOT the input data, NOT the weight
+            % matrix B, and NOT the discrete transformation matrix A.
+            X = pca_lunch('SIM:temporalData',U,A,B,a(i),b(i),T); 
+            X = pca_lunch('TENSOR:prepData',X);                 % preprocess data
+            % do the reconstruction along different tensor unfoldings of X
+            condR2   = pca_lunch('TENSOR:conditionMode',X); % condition-mode reconstruction
+            neuronR2 = pca_lunch('TENSOR:neuronMode',X);    % neuron-mode reconstruction
+            % avg. reconstruction fits across conditions
+            r2(:,1,i) = mean(condR2,2);
+            r2(:,2,i) = mean(neuronR2,2);
+            % take the ratio of the reconstruction with the first (best) PC
+            % Here it is the log ratio such that a ratio of 1 (equal fits
+            % using either basis-neurons or basis-conditions) will be zero.
+            ratio(i)  = log(r2(1,1,i) / r2(1,2,i));
+                % ratios >0 indicate better fit with basis-conditions (i.e.
+                % system exhibits stronger dynamical properties)
+                
+            % make some labels for plotting later
+            label{end+1} = sprintf('a=%0.2f\n\nb=%0.2f',a(i),b(i));
+        end
+        
+        % plot fits:
+        figure('Color',[1 1 1]);
+        % plot the weights we used to make the datasets 
+        subplot(2,1,1);
+        pca_lunch('PLOT:temporalWeights',a,b);
+        % plot ratio of fits using first PC only across data made with
+        % varying weights
+        subplot(2,1,2); pca_lunch('PLOT:tensorFitRatios',ratio,label); 
+        
+    
     case '0' % ------------ cases to do pca -------------------------------
     case 'PCA:eig'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -569,117 +764,7 @@ switch what
         varExp = 100*D/sum(D);                      % calculate % of total variance explained by each PC
         % --
         varargout = {V,D,Xproj,Xrecon,varExp,U,S};
-    case '0' % ------------ PCA examples with image reconstruction --------
-    case 'IMG:reconstruction'
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        % Does image reconstruction from PCs of image data.
-        % Plots reconstructions of the images using different numbers of
-        % PCs.
-        % You can adjust how many PCs are used in the reconstructions by
-        % chaning the variable k below.
-        %
-        % inputs:
-        %       varargin{1} : string of image to load 
-        %                       ('baboon','cocolizo','drake')
-        % output: none
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        img = varargin{1};              % image to open 
-        X   = pca_lunch(['IMG:' img]);  % get image
-        k   = [1 2 4 8 16 32 64 128 256 min(size(X))];% round(linspace(10,min(size(X)),4))]; % choose how many PCs to use in each reconstruction (here, we are taking equal steps from 10:max PCs)
-        % get subplot indices for plotting of reconstructed images
-        numSubplot = numel(k); % number of plots for reconstructed images
-        numCol     = 3;
-        numRow     = ceil(numSubplot/numCol) + 1;
-        % plot original image
-        figure('Color',[1 1 1]);
-        subplot(numRow,numCol,1);
-        imagesc(X);
-        title('original image');
-        h = get(gca);
-        h.XAxis.Visible = 'off';
-        h.YAxis.Visible = 'off';
-        for i = 1:numel(k)
-            % get reconstructed image
-            [~,~,~,Xrecon] = pca_lunch('PCA:svd',X,k(i));
-            %[~,~,~,Xrecon] = pca_lunch('PCA:eig',X,k(i));
-            % plot reconstructed image
-            subplot(numRow,numCol,numCol+i);
-            imagesc(Xrecon); 
-            title(sprintf('%dpc recon',k(i)));
-        end
-        % stylize
-        for i = 1:numSubplot
-            subplot(numRow,numCol,numCol+i);
-            h = get(gca);
-            h.XAxis.Visible = 'off';
-            h.YAxis.Visible = 'off';
-            %axis equal
-        end
-        colormap gray
-        % plot varience explained by PCs
-        [~,~,~,~,varExp] = pca_lunch('PCA:svd',X);
-        cumVarExp = cumsum(varExp);
-        subplot(numRow,numCol,2:numCol);
-        plot(1:length(cumVarExp),cumVarExp,'Color','r','LineWidth',2);
-        ylim([0 100]);
-        box off
-        grid on
-        title('variance explained');
-        ylabel('% variance');
-        xlabel('# PCs')
-    case 'IMG:baboon'
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        % loads baboon image
-        % source: https://homepages.cae.wisc.edu/~ece533/images/
-        %
-        % output:
-        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        d         = pca_lunch('MISC:getDirectory');
-        imgName   = fullfile(d,'test_images','baboon.png');
-        X         = imread(imgName);
-        X         = double(X(:,:,3)); % convert unit8 to double so we can perform operations
-        varargout = {X};
-    case 'IMG:cocolizo'
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        % loads Cocolizo image
-        % source: https://commons.wikimedia.org/wiki/File:Cocolizo.jpg
-        %
-        % output:
-        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        d         = pca_lunch('MISC:getDirectory');
-        imgName   = fullfile(d,'test_images','cocolizo.jpg');
-        X         = imread(imgName);
-        X         = double(X(:,:,1)); % convert unit8 to double so we can perform operations
-        varargout = {X};
-    case 'IMG:drake'
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        % loads image of Drake confusing himself for a member of the
-        % Raptors courtside during the Eastern conference finals.
-        % source: https://www.thebeaverton.com/2019/05/no-one-on-raptors-has-the-heart-to-tell-drake-hes-not-on-the-team/
-        %
-        % output:
-        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        d         = pca_lunch('MISC:getDirectory');
-        imgName   = fullfile(d,'test_images','drake.jpg');
-        X         = imread(imgName);
-        X         = double(X(:,:,2)); % convert unit8 to double so we can perform operations
-        varargout = {X};
-    case 'IMG:bruce'
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        % loads image of Lion's Head on the Bruce Peninsula
-        % source: https://www.alltrails.com/trail/canada/ontario/lions-head-loop-via-bruce-trail
-        %
-        % output:
-        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        d         = pca_lunch('MISC:getDirectory');
-        imgName   = fullfile(d,'test_images','bruce.jpg');
-        X         = imread(imgName);
-        X         = double(X(:,:,3)); % convert unit8 to double so we can perform operations
-        varargout = {X};
+    
     case '0' % ------------ cases to simulate patterns, no temporal stuff -
     case 'SIM:mvnrndExact'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -942,14 +1027,197 @@ switch what
             V(:,i) = v(:);
             D(:,i) = d;
         end
-        varargout = {V,D};   
+        varargout = {V,D};     
     case 'SIM:transformA'
         N  = varargin{1}; % number of measurement channels
         dD = varargin{2}; % intrinsic dimensionality of transformation at each timestep
         A = randn(N,dD)*randn(dD,N)+10*eye(N);
         A = real(orth(A)^(1/10));       % make components orthogonal (and det==1)
         varargout = {A};
+    case 'SIM:temporalData'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % Generates temporal data for a population of measurement channels.
+        % Since this example is more complex, it's more realistic to use
+        % more than 2 conditions. Specifically, this case is used to
+        % examine populations that either encode external variables
+        % (inputs), or execute some process that is well-captured by a
+        % discrete linear transformation (autonomous linear-dynamical system).
+        %
+        % Given initial state data X (an NxC data matrix), this case
+        % returns X (NxCxT), where T is number of timepoints.
+        %
+        % To estimate temporal data:
+        %   x(:,:,t+1) = a*A*x(:,:,t) + b*B*u(:,:,t)
+        % 
+        % where the next state (Xt+1) is a function of a dynamical
+        % transofrmation (A*Xt) plus the tuning (B) to the initial input
+        % (u). a and b are weights that can be altered by user input to
+        % influence how "dynamical" (a) or "encody" (b) a system is.
+        % 
+        % Much of this work is inspired and explained by Seely et al.
+        % (2016) PLoS Comp.Biol.
+        %       https://doi.org/10.1371/journal.pcbi.1005164
+        %
+        % inputs:
+        %       varargin{1} : U data matrix [NxC], initial input to system 
+        %                       (generate with 'SIM:mvnrndExact')
+        %       varargin{2} : A, discrete transformation matrix applied to
+        %                       each timestep. Effect at each timestep is 
+        %                       weighted by a.
+        %                       Can be generated using 'SIM:transformA'
+        %       varargin{3} : B, input weighting matrix [NxC]. Maps U onto X.
+        %                       Effect at each timestep is weighted by b.
+        %       varargin{4} : a, scalar that defines how "dynamical" the
+        %                       system is (a>=0)
+        %       varargin{5} : b, scalar that defines how "encody" the
+        %                       system is (b>=0)
+        %       varargin{6} : T, number of timepoints to generate data for
+        %                       (optional) default = 100 
+        % output:
+        %       varargout{1} : X - [NxCxT] data matrix
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         
+        % GET INPUTS
+        T = 100;         % 100 timepoints (default)
+        U = varargin{1}; % initial state
+        A = varargin{2}; % discrete linear transformation matrix applied to each timestep
+        B = varargin{3}; % input to neuron mapping matrix (specifies tuning of each neuron to each input)
+        a = varargin{4}; % 0:1 scalar that defines how "dynamical" the system is
+        b = varargin{5}; % 0:1 scalar that defines how "encody" the system is
+        if numel(varargin)>5
+            % did user explicitly define number of timepoints?
+            T = varargin{6};
+        end
+        
+        % HOUSEKEEPING
+        [N,C] = size(B);
+        t     = size(U,3);     % get number of neurons and components
+        % check if input signals vary over time:
+        if t==1
+            % input signals are constant across time
+            U = repmat(U,1,1,T);
+        elseif t~=1 && t~=T
+            % input signals change at each timepoint but user did not
+            % specify input for all timesteps
+            error('Input signals change at each timestep, but inputs for all timesteps are not defined ->  T~=(U,3)')
+        end
+        
+        % MAKE DATA
+        X        = nan(N,C,T);  % preallocate data tensor
+        X(:,:,1) = B*U(:,:,1);  % assign input to first temporal state
+        % * Note in the above line, weight b is not applied because system 
+        % needs some sort of input to start a process (i.e. dynamic process
+        % needs input to start)
+        for t = 1:T-1
+            % generate data for each timestep
+            X(:,:,t+1) = a*A*X(:,:,t) + b*B*U(:,:,t);
+            if any(isnan(X(:,:,t+1)))
+                warning('nans in data: check A, B, and U')
+                keyboard
+            end
+        end
+        varargout = {X};
+    
+    case '0' % ------------ tensor analyses of temporal data --------------       
+    case 'TENSOR:prepData'
+        % Case applies firing rate normalization and removes
+        % cross-condition mean from each neuron for each timepoint.
+        X = varargin{1}; % [N x C x T] data matrix
+        % 1. housekeeping
+        [numNeurons,numConds,numTime] = size(X);
+        % 2. soft normalize firing rates to ensure analysis is not
+        % dominated by a few loud neurons
+        softFactor  = 5;
+        F           = permute(X,[3,2,1]);
+        F           = reshape(F,numTime*numConds,numNeurons); % append conditions vertically [CT x N]
+        ranges      = range(F);  % For each neuron, the firing rate range across all conditions and times.
+        normFactors = (ranges+softFactor);
+        F = bsxfun(@times, F, 1./normFactors);  % normalize
+        F = reshape(F,numTime,numConds,numNeurons);
+        X = permute(F,[3,2,1]); % return to original dimensions: [NxCxT]
+        % 3. remove cross-condition mean [1 x T] from each neurons response
+        meanX = mean(X,2);
+        X     = X - repmat(meanX,1,numConds,1); % check with mean(X,2)
+        varargout = {X};
+    case 'TENSOR:neuronMode'
+        X = varargin{1}; % [N x C x T] data matrix
+        % housekeeping
+        [numNeurons,numConds,numTime] = size(X);
+        % reshape data tensor into condition unfolding:
+        % - [N x CT] : neurons are rows - here we find neuron-mode (Nm) ***
+        % - [C x NT] : conditions are rows- here we find condition-mode (Cm) 
+        Nm = reshape(X,numNeurons,numConds*numTime);
+        
+        % do PCA:
+        [U,S,V] = svd(Nm,'econ');
+        [~,si]  = sort(abs(diag(S.^2)),1,'descend');   % sort eigenvalues on size
+        V       = V(:,si);                             % apply same reordering to eigenvectors
+        U       = U(:,si);
+        
+        % Now, do reconstruction with basis-conditions
+        R2 = []; % preallocate R2 to describe condition reconstruction fits
+        % precalculate total sums of squares across conditions for R2 calc.
+        tss = permute(X,[2,1,3]); 
+        tss = reshape(tss,numConds,numNeurons*numTime);
+        tss = diag(tss*tss')';
+        % loop through possible sizes of k (k=num latent components, max is
+        % the minimum size of numNeurons & numConds)
+        Xr = {};
+        for k = 1:min([numConds,numNeurons])
+            % neuron-mode reconstruction
+            Xr{k} = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'; 
+            Xr{k} = reshape(Xr{k},numNeurons,numConds,numTime); % reshape output so it is [NxCxT]
+            % calculate reconstruction error per condition with basis-neurons
+            res = X - Xr{k};                                   % diff b/t reconstruction and original unfolded neuron data
+            res = permute(res,[2,1,3]);                        % permute error matrix so it is [C x N x T]
+            res = reshape(res,numConds,numNeurons*numTime);    % reshape error matrix so it is [C x NT]
+            rss = diag(res*res')';                             % calculate error per condition over time
+            % compute R2 per condition
+            R2(k,:) = 1-rss./tss;
+        end
+        varargout = {R2,Xr};   
+    case 'TENSOR:conditionMode'
+        X = varargin{1}; % [N x C x T] data matrix
+        % housekeeping
+        [numNeurons,numConds,numTime] = size(X);
+        % reshape data tensor into condition unfolding:
+        % - [N x CT] : neurons are rows - here we find neuron-mode (Nm)
+        % - [C x NT] : conditions are rows- here we find condition-mode (Cm) ***
+        Cm = permute(X,[2,1,3]);
+        Cm = reshape(Cm,numConds,numNeurons*numTime);
+        
+        % do PCA:
+        [U,S,V] = svd(Cm,'econ');
+        [~,si]  = sort(abs(diag(S.^2)),1,'descend');   % sort eigenvalues on size
+        V      = V(:,si);                              % apply same reordering to eigenvectors
+        U      = U(:,si);
+        
+        % Now, do reconstruction with basis-conditions
+        R2 = []; % preallocate R2 to describe condition reconstruction fits
+        % precalculate total sums of squares across conditions for R2 calc.
+        tss = permute(X,[2,1,3]); 
+        tss = reshape(tss,numConds,numNeurons*numTime);
+        tss = diag(tss*tss')';
+        % loop through possible sizes of k (k=num latent components, max is
+        % the minimum size of numNeurons & numConds)
+        Xr = {};
+        for k = 1:min([numConds,numNeurons])
+            % condition-mode reconstruction
+            %Xproj = bsxfun(@times,U,diag(S)');
+            Xr{k} = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'; 
+            Xr{k} = reshape(Xr{k},numConds,numNeurons,numTime);
+            Xr{k} = permute(Xr{k},[2,1,3]);                  % reshape output so it is [NxCxT]
+            % calculate reconstruction error per condition with
+            % basis-conditions
+            res = X - Xr{k};                                 % diff b/t reconstruction and original unfolded neuron data
+            res = permute(res,[2,1,3]);                      % permute error matrix so it is [C x N x T]
+            res = reshape(res,numConds,numNeurons*numTime);  % reshape error matrix so it is [C x NT]
+            rss = diag(res*res')';                           % calculate error per condition over time
+            % compute R2 per condition
+            R2(k,:) = 1-rss./tss;
+        end
+        varargout = {R2,Xr};          
+  
     case '0' % ------------ miscellaneous cases for functionality ---------
     case 'MISC:covariance'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1034,6 +1302,25 @@ switch what
         d = which('pca_lunch');
         d = fileparts(d);
         varargout = {d};
+    case 'MISC:temporalDataPrep'
+        % returns some matrices that we can pass through to generate 
+        % temporal data with 'SIM:temporalData'
+        % generate initial inputs to system
+        N  = 10;                                  % no. measurement channels ("neurons")
+        T  = 50;                                  % no. timepoints
+        dS = 5;                                   % intrinsic dimensionality of the input signal (here this is akin to the number of conditions, but not always true)
+        dD = floor(N/2);                          % intrinsic dimensionality of the dynamics
+        % make input signals that vary at each timestep (this variation is not in a structured manner)
+        U = nan(dS,dS,T);
+        for t = 1:T
+            U(:,:,t) = pca_lunch('SIM:mvnrndExact',eye(dS),dS,1); % generate exactly independent data - these are the input signals U
+        end
+        % define the discrete linear transform matrix A (randomly define)
+        A = pca_lunch('SIM:transformA',N,dD);
+        % define the input to measurement channel weighting matrix
+        B = randn(N,dS);
+        varargout = {U,A,B};
+        
     case '0' % ------------ cases for plotting things ---------------------    
     case 'PLOT:dataScatter'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1312,356 +1599,208 @@ switch what
         pca_lunch('PLOT:dataScatter',Xrecon);
         pca_lunch('PLOT:drawlines',numC);
         title('reconstructed data');
-    
-    
-    
-    case '0' % ------------ CASES IN DEVELOPMENT --------------------------
-    case '0' % ------------ cases to simulate temporal patterns -----------       
-    case 'MAKE:temporalData'
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        % Generates temporal data for a population of measurement channels.
-        % Since this example is more complex, it's more realistic to use
-        % more than 2 conditions. Specifically, this case is used to
-        % examine populations that either encode external variables
-        % (inputs), or execute some process that is well-captured by a
-        % discrete linear transformation (autonomous linear-dynamical system).
-        %
-        % Given initial state data X (an NxC data matrix), this case
-        % returns X (NxCxT), where T is number of timepoints.
-        %
-        % To estimate temporal data:
-        %   x(:,:,t+1) = a*A*x(:,:,t) + b*B*u(:,:,t)
-        % 
-        % where the next state (Xt+1) is a function of a dynamical
-        % transofrmation (A*Xt) plus the tuning (B) to the initial input
-        % (u). a and b are weights that can be altered by user input to
-        % influence how "dynamical" (a) or "encody" (b) a system is.
-        % 
-        % Much of this work is inspired and explained by Seely et al.
-        % (2016) PLoS Comp.Biol.
-        %       https://doi.org/10.1371/journal.pcbi.1005164
-        %
-        % inputs:
-        %       varargin{1} : U data matrix [NxC], initial input to system 
-        %                       (generate with 'SIM:mvnrndExact')
-        %       varargin{2} : A, discrete transformation matrix applied to
-        %                       each timestep. Effect at each timestep is 
-        %                       weighted by a.
-        %                       Can be generated using 'SIM:transformA'
-        %       varargin{3} : B, input weighting matrix [NxC]. Maps U onto X.
-        %                       Effect at each timestep is weighted by b.
-        %       varargin{4} : a, scalar that defines how "dynamical" the
-        %                       system is (a>=0)
-        %       varargin{5} : b, scalar that defines how "encody" the
-        %                       system is (b>=0)
-        %       varargin{6} : T, number of timepoints to generate data for
-        %                       (optional) default = 100 
-        % output:
-        %       varargout{1} : X - [NxCxT] data matrix
-        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        
-        % GET INPUTS
-        T = 100;         % 100 timepoints (default)
-        U = varargin{1}; % initial state
-        A = varargin{2}; % discrete linear transformation matrix applied to each timestep
-        B = varargin{3}; % input to neuron mapping matrix (specifies tuning of each neuron to each input)
-        a = varargin{4}; % 0:1 scalar that defines how "dynamical" the system is
-        b = varargin{5}; % 0:1 scalar that defines how "encody" the system is
-        if numel(varargin)>5
-            % did user explicitly define number of timepoints?
-            T = varargin{6};
+    case 'PLOT:trajectory'
+        % plots trajectories of "neural" state in lower-dimensions (if data
+        % is 3+ dimensions, then plots top 3, else, plots as many as
+        % possible).
+        X = varargin{1}; % data matrix [NxCxT]
+        [Xtraj,varExplained] = pca_lunch('MISC:calcTrajectory',X);
+        numK  = size(Xtraj,2);
+        % plot
+        if numK==3
+            hold on
+            plot3(Xtraj(:,1),Xtraj(:,2),Xtraj(:,3),'k');                        % trajectory
+            plot3(0,0,0,'m*');                                                  % origin
+            plot3(Xtraj(1,1),Xtraj(1,2),Xtraj(1,3),...
+                'o','MarkerFaceColor','r','MarkerEdgeColor','k','MarkerSize',10); % start state
+            plot3(Xtraj(end,1),Xtraj(end,2),Xtraj(end,3),...
+                'd','MarkerFaceColor','k','MarkerEdgeColor','r','MarkerSize',10); % end state
+            grid on
+            axis equal
+            zlabel(sprintf('pc3 (%2.1f%% var)',varExplained(3)));
+        elseif numK==2
+            hold on
+            plot(Xtraj(:,1),Xtraj(:,2),'k');
+            plot(0,0,'m*');
+            plot(Xtraj(1,1),Xtraj(1,2),...
+                'o','MarkerFaceColor','r','MarkerEdgeColor','k','MarkerSize',10); % start state
+            plot(Xtraj(end,1),Xtraj(end,2),...
+                'd','MarkerFaceColor','k','MarkerEdgeColor','r','MarkerSize',10); % end state
+            grid on
+            axis equal
+        else
+            error('case made to plot only 2 or 3 dimenions.')
         end
-        
-        % HOUSEKEEPING
-        [N,C] = size(B);
-        t     = size(U,3);     % get number of neurons and components
-        % check if input signals vary over time:
-        if t==1
-            % input signals are constant across time
-            U = repmat(U,1,1,T);
-        elseif t~=1 && t~=T
-            % input signals change at each timepoint but user did not
-            % specify input for all timesteps
-            error('Input signals change at each timestep, but inputs for all timesteps are not defined ->  T~=(U,3)')
-        end
-        
-        % MAKE DATA
-        X        = nan(N,C,T);  % preallocate data tensor
-        X(:,:,1) = B*U(:,:,1);  % assign input to first temporal state
-        % * Note in the above line, weight b is not applied because system 
-        % needs some sort of input to start a process (i.e. dynamic process
-        % needs input to start)
-        for t = 1:T-1
-            % generate data for each timestep
-            X(:,:,t+1) = a*A*X(:,:,t) + b*B*U(:,:,t);
-            if any(isnan(X(:,:,t+1)))
-                warning('nans in data: check A, B, and U')
-                keyboard
-            end
-        end
-        varargout = {X};
-    
-    case 'TENSOR:prepData'
-        % Case applies firing rate normalization and removes
-        % cross-condition mean from each neuron for each timepoint.
-        X = varargin{1}; % [N x C x T] data matrix
-        % 1. housekeeping
-        [numNeurons,numConds,numTime] = size(X);
-        % 2. soft normalize firing rates to ensure analysis is not
-        % dominated by a few loud neurons
-        softFactor  = 5;
-        F           = permute(X,[3,2,1]);
-        F           = reshape(F,numTime*numConds,numNeurons); % append conditions vertically [CT x N]
-        ranges      = range(F);  % For each neuron, the firing rate range across all conditions and times.
-        normFactors = (ranges+softFactor);
-        F = bsxfun(@times, F, 1./normFactors);  % normalize
-        F = reshape(F,numTime,numConds,numNeurons);
-        X = permute(F,[3,2,1]); % return to original dimensions: [NxCxT]
-        % 3. remove cross-condition mean [1 x T] from each neurons response
-        meanX = mean(X,2);
-        X     = X - repmat(meanX,1,numConds,1); % check with mean(X,2)
-        varargout = {X};
-    case 'TENSOR:neuronMode'
-        X = varargin{1}; % [N x C x T] data matrix
-        % housekeeping
-        [numNeurons,numConds,numTime] = size(X);
-        % reshape data tensor into condition unfolding:
-        % - [N x CT] : neurons are rows - here we find neuron-mode (Nm) ***
-        % - [C x NT] : conditions are rows- here we find condition-mode (Cm) 
-        Nm = reshape(X,numNeurons,numConds*numTime);
-        
-        % do PCA:
-        [U,S,V] = svd(Nm,'econ');
-        [~,si]  = sort(abs(diag(S.^2)),1,'descend');   % sort eigenvalues on size
-        V       = V(:,si);                             % apply same reordering to eigenvectors
-        U       = U(:,si);
-        
-        % Now, do reconstruction with basis-conditions
-        R2 = []; % preallocate R2 to describe condition reconstruction fits
-        % precalculate total sums of squares across conditions for R2 calc.
-        tss = permute(X,[2,1,3]); 
-        tss = reshape(tss,numConds,numNeurons*numTime);
-        tss = diag(tss*tss')';
-        % loop through possible sizes of k (k=num latent components, max is
-        % the minimum size of numNeurons & numConds)
-        for k = 1:min([numConds,numNeurons])
-            % neuron-mode reconstruction
-            Xr = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'; 
-            Xr = reshape(Xr,numNeurons,numConds,numTime);
-            % calculate reconstruction error per condition with basis-neurons
-            res = X - Xr;                                      % diff b/t reconstruction and original unfolded neuron data
-            res = permute(res,[2,1,3]);                        % permute error matrix so it is [C x N x T]
-            res = reshape(res,numConds,numNeurons*numTime);    % reshape error matrix so it is [C x NT]
-            rss = diag(res*res')';                             % calculate error per condition over time
-            % compute R2 per condition
-            R2(k,:) = 1-rss./tss;
-        end
-        varargout = {R2};   
-    case 'TENSOR:conditionMode'
-        X = varargin{1}; % [N x C x T] data matrix
-        % housekeeping
-        [numNeurons,numConds,numTime] = size(X);
-        % reshape data tensor into condition unfolding:
-        % - [N x CT] : neurons are rows - here we find neuron-mode (Nm)
-        % - [C x NT] : conditions are rows- here we find condition-mode (Cm) ***
-        Cm = permute(X,[2,1,3]);
-        Cm = reshape(Cm,numConds,numNeurons*numTime);
-        
-        % do PCA:
-        [U,S,V] = svd(Cm,'econ');
-        [~,si]  = sort(abs(diag(S.^2)),1,'descend');   % sort eigenvalues on size
-        V      = V(:,si);                              % apply same reordering to eigenvectors
-        U      = U(:,si);
-        
-        % Now, do reconstruction with basis-conditions
-        R2 = []; % preallocate R2 to describe condition reconstruction fits
-        % precalculate total sums of squares across conditions for R2 calc.
-        tss = permute(X,[2,1,3]); 
-        tss = reshape(tss,numConds,numNeurons*numTime);
-        tss = diag(tss*tss')';
-        % loop through possible sizes of k (k=num latent components, max is
-        % the minimum size of numNeurons & numConds)
-        for k = 1:min([numConds,numNeurons])
-            % condition-mode reconstruction
-            Xr = U(:,1:k)*S(1:k,1:k)*V(:,1:k)'; 
-            Xr = reshape(Xr,numConds,numNeurons,numTime);
-            Xr = permute(Xr,[2,1,3]);
-            % calculate reconstruction error per condition with
-            % basis-conditions
-            res = X - Xr;                                     % diff b/t reconstruction and original unfolded neuron data
-            res = permute(res,[2,1,3]);                      % permute error matrix so it is [C x N x T]
-            res = reshape(res,numConds,numNeurons*numTime);  % reshape error matrix so it is [C x NT]
-            rss = diag(res*res')';                          % calculate error per condition over time
-            % compute R2 per condition
-            R2(k,:) = 1-rss./tss;
-        end
-        varargout = {R2};   
-    
-    case 'DO:tensorAnalysis'
-        % generate initial inputs to system
-        N  = 10;                                  % no. measurement channels ("neurons")
-        T  = 100;                                 % no. timepoints
-        dS = 5;                                   % intrinsic dimensionality of the input signal (here this is akin to the number of conditions, but not always true)
-        dD = floor(N/2);                          % intrinsic dimensionality of the dynamics
-        % make input signals that vary at each timestep (this variation is not in a structured manner)
-        U = nan(dD,dS,T);
-        for t = 1:T
-            U(:,:,t) = pca_lunch('SIM:mvnrndExact',eye(dS),dS,1); % generate exactly independent data - these are the input signals U
-        end
-        
-        % define the discrete linear transform matrix A (randomly define)
-        A = pca_lunch('SIM:transformA',N,dD);
-        % define the input to measurement channel weighting matrix
-        B = randn(N,dS);
-        % assign weights for how input driven & dynamical the system will be:
-        a = [0:0.05:1];
-        b = fliplr(a);
-        % check a and b are same size
-        numWeights = length(a);
-        if numWeights~=length(b)
-            error('a and b are not the same size')
-        end
-        % Do reconstruction using neuron-unfolding and condition-unfolding
-        r2 = nan(min([dS,dD]),2,length(a)); % preallocate array for reconstruction fits
-        ratio = nan(numWeights,1);
-        label = {};
-        for i = 1:numWeights
-            % generate data with the same matrices and inputs, but change
-            % the weights. This is important- we are only changing the
-            % weights on each loop, NOT the input data, NOT the weight
-            % matrix B, and NOT the discrete transformation matrix A.
-            X = pca_lunch('MAKE:temporalData',U,A,B,a(i),b(i),T); 
-            X = pca_lunch('TENSOR:prepData',X); % preprocess data
-            % do the reconstruction along different tensor unfoldings of X
-            condR2   = pca_lunch('TENSOR:conditionMode',X);
-            neuronR2 = pca_lunch('TENSOR:neuronMode',X);
-            % avg. reconstruction fits across conditions
-            r2(:,1,i) = mean(condR2,2);
-            r2(:,2,i) = mean(neuronR2,2);
-            % take the ratio of the reconstruction with the first (best) PC
-            % Here it is the log ratio such that a ratio of 1 (equal fits
-            % using either basis-neurons or basis-conditions) will be zero.
-            ratio(i)  = log(r2(1,1,i) / r2(1,2,i));
-                % ratios >0 indicate better fit with basis-conditions (i.e.
-                % system exhibits stronger dynamical properties)
-                
-            % make some labels for plotting later
-            label{end+1} = sprintf('a=%0.2f\n\nb=%0.2f',a(i),b(i));
-        end
-        
-        % plot fits:
-        figure('Color',[1 1 1]);
-        % plot the weights we used to make the datasets 
-        subplot(2,1,1);
+        xlabel(sprintf('pc1 (%2.1f%% var)',varExplained(1)));
+        ylabel(sprintf('pc2 (%2.1f%% var)',varExplained(2)));
+    case 'PLOT:temporalWeights'
+        a = varargin{1};
+        b = varargin{2};
         imagesc([a;b]);
-        colormap hot
+        colormap(flipud(hot));
+        caxis([0 1.5]);
         xlabel('dataset');
         set(gca,'ytick',[1 2],'yticklabel',{'input weight','dynamics weight'});
-        info = get(gca); info.YAxis.FontSize = 14;
-        % plot ratio of fits using first PC only across data made with
-        % varying weights
-        subplot(2,1,2);
+        h = get(gca);
+        h.YAxis.FontSize = 14;
+        varargout = {h};
+    case 'PLOT:tensorFitRatios'
+        ratio = varargin{1};
+        if numel(varargin)==2
+            label = varargin{2};
+        end
         plot(ratio,'o-k','LineWidth',1.5);
+        xlim([0.5 length(ratio)+0.5]);
         pca_lunch('PLOT:drawlines',1,[0.7 0.7 0.7]);
         xlabel('dataset');
         ylabel('log( r2 condition mode / r2 neuron mode )');
         title('estimating the mode of each dataset');
-        xlim([0.5 numWeights+0.5]);
-        text(1:numWeights,ratio,label);
-        
-        
-        
-    case 'MAKE:temporal'
-        % Wrapper function to generate responses for each measurement
-        % channel for T timesteps.
-        % Returns tensor [CxNxT]
-        % Responses can be 'sparse', 'uncorrelated', or 'correlated'
-        % During each timestep, the responses are transformed according to
-        % a discrete transformation matrix M, which is calculated from a
-        % "total" transformation matrix A. 
-        % IMPORTANT: A = I does not mean there is no transformation! 
-        % This case will always generate data where the state changes over
-        % time!
-        % The user supplies:
-        % - response pattern type ('sparse','uncorrelated','correlated')
-        % - T: number of timesteps
-        % - A: the transformation applied to timestep 1 to generate data
-        % for timestep T.
-        type = varargin{1};  % pattern type
-        T    = varargin{2};  % number of timepoints
-        A    = varargin{3};  % transformation matrix to generate last timestep
-        B    = [];
-        
-        % generate responses at time 1
-        switch type
-            case 'sparse'
-                Xt1 = pca_lunch('SIM:sparse');
-            case 'uncorrelated'
-                Xt1 = pca_lunch('SIM:uncorrelated');
-            case 'correlated'
-                Xt1 = pca_lunch('SIM:correlated');
+        if exist('label','var')
+            text(1:length(ratio),ratio,label);
         end
-        % discretize transformation matrix to apply small steps to each step
-        M = A./T;
-        % make temporal patterns
-        X = zeros(numC,N,T);    % preallocate tensor
-        X(:,:,1) = Xt1;         % slot the first responses into timepoint 1.
-        for t = 2:T            
-            dX = M*X(:,:,t-1);          % this is the change in state
-            X(:,:,t) = dX + X(:,:,t-1); % add change in state to previous state to calc current state
+        
+    case '0' % ------------ PCA examples with image reconstruction --------
+    case 'IMG:reconstruction'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % Does image reconstruction from PCs of image data.
+        % Plots reconstructions of the images using different numbers of
+        % PCs.
+        % You can adjust how many PCs are used in the reconstructions by
+        % chaning the variable k below.
+        %
+        % inputs:
+        %       varargin{1} : string of image to load 
+        %                       ('baboon','cocolizo','drake')
+        % output: none
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        img = varargin{1};              % image to open 
+        X   = pca_lunch(['IMG:' img]);  % get image
+        k   = [1 2 4 8 16 32 64 128 256 min(size(X))];% round(linspace(10,min(size(X)),4))]; % choose how many PCs to use in each reconstruction (here, we are taking equal steps from 10:max PCs)
+        % get subplot indices for plotting of reconstructed images
+        numSubplot = numel(k); % number of plots for reconstructed images
+        numCol     = 3;
+        numRow     = ceil(numSubplot/numCol) + 1;
+        % plot original image
+        figure('Color',[1 1 1]);
+        subplot(numRow,numCol,1);
+        imagesc(X);
+        title('original image');
+        h = get(gca);
+        h.XAxis.Visible = 'off';
+        h.YAxis.Visible = 'off';
+        for i = 1:numel(k)
+            % get reconstructed image
+            [~,~,~,Xrecon] = pca_lunch('PCA:svd',X,k(i));
+            %[~,~,~,Xrecon] = pca_lunch('PCA:eig',X,k(i));
+            % plot reconstructed image
+            subplot(numRow,numCol,numCol+i);
+            imagesc(Xrecon); 
+            title(sprintf('%dpc recon',k(i)));
         end
+        % stylize
+        for i = 1:numSubplot
+            subplot(numRow,numCol,numCol+i);
+            h = get(gca);
+            h.XAxis.Visible = 'off';
+            h.YAxis.Visible = 'off';
+            %axis equal
+        end
+        colormap gray
+        % plot varience explained by PCs
+        [~,~,~,~,varExp] = pca_lunch('PCA:svd',X);
+        cumVarExp = cumsum(varExp);
+        subplot(numRow,numCol,2:numCol);
+        plot(1:length(cumVarExp),cumVarExp,'Color','r','LineWidth',2);
+        ylim([0 100]);
+        box off
+        grid on
+        title('variance explained');
+        ylabel('% variance');
+        xlabel('# PCs')
+    case 'IMG:baboon'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % loads baboon image
+        % source: https://homepages.cae.wisc.edu/~ece533/images/
+        %
+        % output:
+        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        d         = pca_lunch('MISC:getDirectory');
+        imgName   = fullfile(d,'test_images','baboon.png');
+        X         = imread(imgName);
+        X         = double(X(:,:,3)); % convert unit8 to double so we can perform operations
         varargout = {X};
-    case 'DO:neuralPCA'
-        % search for transformations that occur in the neural state space
-        % Here we are seeking transformations that occur similarly in all 
-        % conditions (i.e. they are not condition specific).
-        X = varargin{1}; % [CxNxT] temporal data tensor
-        % first we must reshape data matrix to [CTxN].
-        % We reshape it this way because we are searching for
-        % state transforms that occur similarly across neurons for all
-        % conditions.
-        X = permute(X,[3,1,2]);
-        X = reshape(X,size(X,1)*size(X,2),size(X,3));
-        % do pca on reshaped data matrix (looking for a few dimensions to
-        % describe state behaviour across all neurons)
-        [V,D,Xproj,Xred] = pca_lunch('PCA:svd',X);
-        % let's take PCs = numC
-        Xproj = Xproj(:,1:numC);
-        varargout = {Xproj,Xred};    
-    case 'temporalTest'
-        % some quick notes from the train
-        X = pca_lunch('SIM:correlated');
-        A = eye(numC).*2; % transformation
-        T = 100; % timesteps
-        M = A./T;
-        % make temporal patterns
-        Xt = zeros(numC*T,N);
-        Xt = [X;Xt];
-        j = numC+1;
-        for i= 1:T
-            X(j:j+1,:) = M*X(j-numC:j-1,:) + X(j-numC:j-1,:);
-            j = j+numC;
-        end
-        % stack temporal data matrix so it's condition 1 (all timepoints),
-        % then cond 2, etc..
-        Xc = [X(1:2:end,:); X(2:2:end,:)];
-        [~,scores] = pca(Xc,'Economy',1);
-        Xred = scores(:,1:6); % take first 6 pcs
-        tt = [ones(T+1,1); ones(T+1,1).*2]; % condition vector
-        % plot
-        figure
-        hold on
-        plot(Xred(tt==1,1),Xred(tt==1,2));
-        plot(Xred(tt==2,1),Xred(tt==2,2),'r');
-        % end points
-        scatter(Xred(101,1),Xred(101,2),'filled','MarkerFaceColor',[0 0 0])
-        scatter(Xred(end,1),Xred(end,2),'filled','MarkerFaceColor',[0 0 0])
+    case 'IMG:cocolizo'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % loads Cocolizo image
+        % source: https://commons.wikimedia.org/wiki/File:Cocolizo.jpg
+        %
+        % output:
+        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        d         = pca_lunch('MISC:getDirectory');
+        imgName   = fullfile(d,'test_images','cocolizo.jpg');
+        X         = imread(imgName);
+        X         = double(X(:,:,1)); % convert unit8 to double so we can perform operations
+        varargout = {X};
+    case 'IMG:drake'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % loads image of Drake confusing himself for a member of the
+        % Raptors courtside during the Eastern conference finals.
+        % source: https://www.thebeaverton.com/2019/05/no-one-on-raptors-has-the-heart-to-tell-drake-hes-not-on-the-team/
+        %
+        % output:
+        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        d         = pca_lunch('MISC:getDirectory');
+        imgName   = fullfile(d,'test_images','drake.jpg');
+        X         = imread(imgName);
+        X         = double(X(:,:,2)); % convert unit8 to double so we can perform operations
+        varargout = {X};
+    case 'IMG:bruce'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % loads image of Lion's Head on the Bruce Peninsula
+        % source: https://www.alltrails.com/trail/canada/ontario/lions-head-loop-via-bruce-trail
+        %
+        % output:
+        % varargout{1} : X - 2D matrix of image that can be viewed via imagesc(X)
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        d         = pca_lunch('MISC:getDirectory');
+        imgName   = fullfile(d,'test_images','bruce.jpg');
+        X         = imread(imgName);
+        X         = double(X(:,:,3)); % convert unit8 to double so we can perform operations
+        varargout = {X};
+    
         
-        % estimate transition matrix M from Xred:
-        %maskT1 = 
+    case '0' % ------------ cases in development --------------------------
+    % TO DO:
+    % - explicit estimation of A from temporal data
+    % - make A rotation-only, another one scaling-only
+    % - case to calculate tangling matrix (more tangling for input-driven)
+    case 'MISC:calcTrajectory'
+        % case to calculate tangling of trajectory in PC/neural state space
+        X = varargin{1};  % data matrix [NxCxT]
+        % do PCA on condition-unfolding
+        [N,C,T] = size(X);
+        X = pca_lunch('TENSOR:prepData',X);
+        X = reshape(X,N,C*T)'; % [CTxN]
+        [U,S]   = svd(X,'econ');
+        % find enough PCs to account for 95% of variance in data:
+        varExplained = diag(S.^2);
+        varExplained = varExplained./sum(varExplained).*100;
+        %[~,numK]     = min(abs(varExplained-0.95));
+        numK  = 3;
+        % project data using these PCs
+        Xtraj = U(:,1:numK)*S(1:numK,1:numK);
+        varargout = {Xtraj,varExplained};
+    case 'MISC:calcTangling'
+        X = varargin{1}; % data matrix [NxCxT]
+        Xtraj = pca_lunch('MISC:calcTrajectory',X);
+        dX    = Xtraj(2:end,:) - Xtraj(1:end-1,:);
+        ddX   = dX(2:end,:) - dX(1:end-1,:);
+        Q     = norm(ddX,2)/(norm(dX,2)+realmin);
+        varargout = {Q};
         
-        keyboard
-   
     otherwise
         error('%s : no such case',what)
 end % switch what
@@ -1701,6 +1840,12 @@ end % switch what
 % single trial analyses of population activity. Different than PCA, but
 % related.
 %       https://web.stanford.edu/~shenoy/GroupPublications/YuEtAlNIPS2009.pdf
+%
+% Seely et al. (2016) paper on Tensor analysis to uncover preferred "mode"
+% of a population of neurons.
+%       https://doi.org/10.1371/journal.pcbi.1005164
+%
+
 
 
 end % function
