@@ -45,6 +45,7 @@ data_face   = [0.8 0.8 0.8];                 % marker face colours for data scat
 data_edge   = [0 0 0];                       % marker edge colours for data scatterplots
 alpha_face  = 0.25;                          % transperancy of marker faces (1 = no transperancy)
 alpha_edge  = 0.25;                          % transperancy of marker edges (1 = no transperancy)
+tjLineWidth = 1.25;
 
 %% ------------ brief error handling --------------------------------------
 if sum(ismember(numC,[2,3])) < 1
@@ -391,6 +392,83 @@ switch what
                 % abs of correlations because signs might change between
                 % eig and svd (the signs are superfluous)
     
+    case 'DO:exampleDynamics'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % WRAPPER CASE TO DO A SET OF THINGS:
+        % Here we will simulate temporal data for a system with dynamics
+        % only. These systems are initialized by the first input U(:,:,1),
+        % but then evolve over time using only A*X(:,:,t-1).
+        %
+        % no inputs, no outputs
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        numD    = 6;
+        numCols = 3;
+        numRows = ceil(numD/numCols);
+        T       = 50;
+        figure('Color',[1 1 1]);
+        % get starting state (this will stay constant across datasets)
+        U = pca_lunch('SIM:temporalDataPrep');
+        for i = 1:numD
+            % initialize new transformation A
+            [~,A,B] = pca_lunch('SIM:temporalDataPrep');
+            % generate temporal data
+            X = pca_lunch('SIM:temporalData',U,A,B,1,0,T);
+            % plot PC trajectories of this simulated data
+            subplot(numRows,numCols,i);
+            pca_lunch('PLOT:trajectory',X);
+        end
+    case 'DO:variableInputWeights'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % WRAPPER CASE TO DO A SET OF THINGS:
+        % Here we will simulate temporal data for a system with dynamics
+        % and input-driven components. 
+        % These systems are initialized by the the same inputs and uses the
+        % same A & B each time.
+        % The degree the system is input-driven is varied.
+        %
+        % no inputs, no outputs
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        numD    = 6;
+        numCols = 3;
+        numRows = ceil(numD/numCols);
+        T       = 50;
+        b       = [0 0.01 0.05 0.1 0.5 1];%linspace(0,1,numD);
+        figure('Color',[1 1 1]);
+        % get starting state (this will stay constant across datasets)
+        [U,A,B] = pca_lunch('SIM:temporalDataPrep');
+        for i = 1:numD
+            % generate temporal data
+            X = pca_lunch('SIM:temporalData',U,A,B,1,b(i),T);
+            % plot PC trajectories of this simulated data
+            subplot(numRows,numCols,i);
+            pca_lunch('PLOT:trajectory',X);
+        end
+    case 'DO:variableDynamicWeights'
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        % WRAPPER CASE TO DO A SET OF THINGS:
+        % Here we will simulate temporal data for a system with dynamics
+        % and input-driven components. 
+        % These systems are initialized by the the same inputs and uses the
+        % same A & B each time.
+        % The degree the system reflects dynamics is varied.
+        %
+        % no inputs, no outputs
+        % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        numD    = 6;
+        numCols = 3;
+        numRows = ceil(numD/numCols);
+        T       = 50;
+        a       = linspace(0,1,numD);
+        figure('Color',[1 1 1]);
+        % get starting state (this will stay constant across datasets)
+        [U,A,B] = pca_lunch('SIM:temporalDataPrep');
+        for i = 1:numD
+            % generate temporal data
+            X = pca_lunch('SIM:temporalData',U,A,B,a(i),1,T);
+            % plot PC trajectories of this simulated data
+            subplot(numRows,numCols,i);
+            pca_lunch('PLOT:trajectory',X);
+        end       
     case 'DO:tensorAnalysis'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         % WRAPPER CASE TO DO A SET OF THINGS:
@@ -404,10 +482,11 @@ switch what
         % input-driven components of the data. 
         %
         % In this case, we generate temporal data with the same A, B, and
-        % U, but we make 3 datasets:
+        % U, but we make 4 datasets:
         %   1. A dynamics only system
         %   2. An input-driven system
         %   3. An input-driven system where inputs don't change.
+        %   3. An input-driven system where inputs change in predictable manner.
         %
         % With these datasets, we then apply PCA along the neuron-unfolding
         % and condition-unfolding of the data tensors (tensors are 3+
@@ -456,21 +535,21 @@ switch what
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         
         % generate initial inputs to system
-        [U,A,B] = pca_lunch('MISC:temporalDataPrep');
+        [U,A,B] = pca_lunch('SIM:temporalDataPrep');
         [~,C,T] = size(U);
         N       = size(A,1);
-        % assign weights for how input driven & dynamical the system will be:
-        a = [1,0,0];
-        b = [0,1,1];
-        numWeights = numel(a);
         % generate the datasets:
         X{1} = pca_lunch('SIM:temporalData',U,A,B,1,0,T);         % make fully dynamic system
         X{2} = pca_lunch('SIM:temporalData',U,A,B,0,1,T);         % make fully input-driven system
         X{3} = pca_lunch('SIM:temporalData',U(:,:,1),A,B,0,1,T);  % make fully input-driven where input doesn't change
+        Ad   = pca_lunch('SIM:transformA',C,C);
+        Ud   = pca_lunch('SIM:autoDynamics',Ad,U(:,:,1),T);       % make fully input-driven where input changes in predictable manner
+        X{4} = pca_lunch('SIM:temporalData',Ud,A,B,0,1,T);
+        numDatasets = numel(X);
         % Do reconstruction using neuron and condition modes, assess fits
-        r2 = nan(min([N,C]),2,length(a)); % preallocate array for reconstruction fits
-        ratio = nan(numWeights,1);
-        for i = 1:numWeights
+        r2 = nan(min([N,C]),2,numDatasets); % preallocate array for reconstruction fits
+        ratio = nan(numDatasets,1);
+        for i = 1:numDatasets
             Xp = pca_lunch('TENSOR:prepData',X{i});                 % preprocess data
             % do the reconstruction along different tensor unfoldings of X
             condR2   = pca_lunch('TENSOR:conditionMode',Xp); % condition-mode reconstruction
@@ -490,23 +569,21 @@ switch what
         figure('Color',[1 1 1]);
         % plot trajectories through PC ("neural state") space
         subplot(2,3,1); pca_lunch('PLOT:trajectory',X{1}); title('1: dynamic system');
-        subplot(2,3,2); pca_lunch('PLOT:trajectory',X{2}); title('2: input-driven system, input changes');
-        subplot(2,3,3); pca_lunch('PLOT:trajectory',X{3}); title('3: input-driven, input stable');
+        subplot(2,3,2); pca_lunch('PLOT:trajectory',X{2}); title(sprintf('2: input-driven\nRANDOM input'));
+        subplot(2,3,4); pca_lunch('PLOT:trajectory',X{3}); title(sprintf('3: input-driven\nSTABLE input'));
+        subplot(2,3,5); pca_lunch('PLOT:trajectory',X{4}); title(sprintf('4: input-driven\nDYNAMIC input'));
         % plot a and b weights of each dataset:
-        subplot(2,3,4); pca_lunch('PLOT:temporalWeights',a,b);
+        a = [1,0,0,0];
+        b = [0,1,1,1];
+        subplot(2,3,3); pca_lunch('PLOT:temporalWeights',a,b);
         % plot reconstruction fits
-        subplot(2,3,5); 
-        label = {'  dynamic system','  input-driven',sprintf('  input-driven\n  stable input')};
+        subplot(2,3,6); 
+        label = {sprintf('\tdynamic\n\tsystem'),...
+            sprintf('\tinput-driven\n\trandom input'),...
+            sprintf('\tinput-driven\n\tstable input'),...
+            sprintf('\tinput-driven\n\tdynamic input')};
         pca_lunch('PLOT:tensorFitRatios',ratio,label); 
         ylim([-1 1]);
-        % plot tangling measure for each dataset
-        subplot(2,3,6);
-        title('tangling: TO DO');
-        Q1 = pca_lunch('MISC:calcTangling',X{1});
-        Q2 = pca_lunch('MISC:calcTangling',X{2});
-        Q3 = pca_lunch('MISC:calcTangling',X{3});
-        keyboard
-        
     case 'DO:tensorAnalysisMultiWeights'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         % WRAPPER CASE TO DO A SET OF THINGS:
@@ -536,7 +613,7 @@ switch what
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         
         % generate initial inputs to system
-        [U,A,B] = pca_lunch('MISC:temporalDataPrep');
+        [U,A,B] = pca_lunch('SIM:temporalDataPrep');
         [~,C,T] = size(U);
         N       = size(A,1);
         % assign weights for how input driven & dynamical the system will be:
@@ -582,7 +659,7 @@ switch what
         pca_lunch('PLOT:temporalWeights',a,b);
         % plot ratio of fits using first PC only across data made with
         % varying weights
-        subplot(2,1,2); pca_lunch('PLOT:tensorFitRatios',ratio,label); 
+        subplot(2,1,2); pca_lunch('PLOT:tensorFitRatios',ratio); 
         
     
     case '0' % ------------ cases to do pca -------------------------------
@@ -1034,6 +1111,30 @@ switch what
         A = randn(N,dD)*randn(dD,N)+10*eye(N);
         A = real(orth(A)^(1/10));       % make components orthogonal (and det==1)
         varargout = {A};
+    case 'SIM:rotationalA'
+        N  = varargin{1}; % number of measurement channels
+        dD = varargin{2}; % intrinsic dimensionality of transformation at each timestep
+        A = pca_lunch('SIM:transformA',N,dD);
+        A = (A-A')./2;    % make A a rotational matrix
+        varargout = {A};
+    case 'SIM:temporalDataPrep'
+        % returns some matrices that we can pass through to generate 
+        % temporal data with 'SIM:temporalData'
+        % generate initial inputs to system
+        N  = 10;                                  % no. measurement channels ("neurons")
+        T  = 50;                                  % no. timepoints
+        dS = 5;                                   % intrinsic dimensionality of the input signal (here this is akin to the number of conditions, but not always true)
+        dD = floor(N/2);                          % intrinsic dimensionality of the dynamics
+        % make input signals that vary at each timestep (this variation is not in a structured manner)
+        U = nan(dS,dS,T);
+        for t = 1:T
+            U(:,:,t) = pca_lunch('SIM:mvnrndExact',eye(dS),dS,1); % generate exactly independent data - these are the input signals U
+        end
+        % define the discrete linear transform matrix A (randomly define)
+        A = pca_lunch('SIM:transformA',N,dD);
+        % define the input to measurement channel weighting matrix
+        B = randn(N,dS);
+        varargout = {U,A,B};
     case 'SIM:temporalData'
         % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         % Generates temporal data for a population of measurement channels.
@@ -1302,24 +1403,24 @@ switch what
         d = which('pca_lunch');
         d = fileparts(d);
         varargout = {d};
-    case 'MISC:temporalDataPrep'
-        % returns some matrices that we can pass through to generate 
-        % temporal data with 'SIM:temporalData'
-        % generate initial inputs to system
-        N  = 10;                                  % no. measurement channels ("neurons")
-        T  = 50;                                  % no. timepoints
-        dS = 5;                                   % intrinsic dimensionality of the input signal (here this is akin to the number of conditions, but not always true)
-        dD = floor(N/2);                          % intrinsic dimensionality of the dynamics
-        % make input signals that vary at each timestep (this variation is not in a structured manner)
-        U = nan(dS,dS,T);
-        for t = 1:T
-            U(:,:,t) = pca_lunch('SIM:mvnrndExact',eye(dS),dS,1); % generate exactly independent data - these are the input signals U
-        end
-        % define the discrete linear transform matrix A (randomly define)
-        A = pca_lunch('SIM:transformA',N,dD);
-        % define the input to measurement channel weighting matrix
-        B = randn(N,dS);
-        varargout = {U,A,B};
+    case 'MISC:calcTrajectory'
+        % case to calculate tangling of trajectory in PC/neural state space
+        X = varargin{1};  % data matrix [NxCxT]
+        % do PCA on condition-unfolding
+        [N,C,T] = size(X);
+        X = pca_lunch('TENSOR:prepData',X);
+        X = reshape(X,N,C*T)'; % [CTxN]
+        [U,S]   = svd(X,'econ');
+        % find enough PCs to account for 95% of variance in data:
+        varExplained = diag(S.^2);
+        varExplained = varExplained./sum(varExplained).*100;
+        %[~,K]        = min(abs(varExplained-0.95));
+        K  = 3;
+        % project data using these PCs
+        Xtraj = U(:,1:K)*S(1:K,1:K);
+        % reshape projected data into KxCxT
+        Xtraj = reshape(Xtraj',K,C,T);
+        varargout = {Xtraj,varExplained};
         
     case '0' % ------------ cases for plotting things ---------------------    
     case 'PLOT:dataScatter'
@@ -1605,44 +1706,77 @@ switch what
         % possible).
         X = varargin{1}; % data matrix [NxCxT]
         [Xtraj,varExplained] = pca_lunch('MISC:calcTrajectory',X);
-        numK  = size(Xtraj,2);
-        % plot
-        if numK==3
-            hold on
-            plot3(Xtraj(:,1),Xtraj(:,2),Xtraj(:,3),'k');                        % trajectory
-            plot3(0,0,0,'m*');                                                  % origin
-            plot3(Xtraj(1,1),Xtraj(1,2),Xtraj(1,3),...
-                'o','MarkerFaceColor','r','MarkerEdgeColor','k','MarkerSize',10); % start state
-            plot3(Xtraj(end,1),Xtraj(end,2),Xtraj(end,3),...
-                'd','MarkerFaceColor','k','MarkerEdgeColor','r','MarkerSize',10); % end state
-            grid on
-            axis equal
-            zlabel(sprintf('pc3 (%2.1f%% var)',varExplained(3)));
-        elseif numK==2
-            hold on
-            plot(Xtraj(:,1),Xtraj(:,2),'k');
-            plot(0,0,'m*');
-            plot(Xtraj(1,1),Xtraj(1,2),...
-                'o','MarkerFaceColor','r','MarkerEdgeColor','k','MarkerSize',10); % start state
-            plot(Xtraj(end,1),Xtraj(end,2),...
-                'd','MarkerFaceColor','k','MarkerEdgeColor','r','MarkerSize',10); % end state
-            grid on
-            axis equal
-        else
-            error('case made to plot only 2 or 3 dimenions.')
+        [K,C,T]  = size(Xtraj);
+        clr      = pca_lunch('PLOT:getTrajectoryColours',C);
+        % plot each condition's trajectory through PC space
+        markerSize = 8;
+        hold on
+        for c = 1:C 
+            % data to plot
+            X = squeeze(Xtraj(1,c,:));
+            Y = squeeze(Xtraj(2,c,:));
+            if K==3
+                % mark origin
+                plot3(0,0,0,'m*');   
+                % plot trajectory
+                Z = squeeze(Xtraj(3,c,:));
+                plot3(X,Y,Z,'Color',clr(c,:),'LineWidth',tjLineWidth);
+                plot3(X(1),Y(1),Z(1),...
+                    'o','MarkerFaceColor',clr(c,:),'MarkerEdgeColor','k','MarkerSize',markerSize); % start state
+                plot3(X(end),Y(end),Z(end),'>','Color',clr(c,:),'MarkerSize',markerSize);          % end state
+            elseif K==2
+                % mark origin
+                plot(0,0,'m+','MarkerSize',markerSize);   
+                % plot trajectory
+                plot(X,Y,'Color',clr(c,:),'LineWidth',tjLineWidth);
+                plot(X(1),Y(1),...
+                    'o','MarkerFaceColor',clr(c,:),'MarkerEdgeColor','k','MarkerSize',markerSize); % start state
+                plot(X(end),Y(end),'>','Color',clr(c,:),'MarkerSize',markerSize);                  % end state
+            else
+                error('case made to plot only 2 or 3 dimenions.')
+            end
         end
+        grid on
+        axis equal
+        
         xlabel(sprintf('pc1 (%2.1f%% var)',varExplained(1)));
         ylabel(sprintf('pc2 (%2.1f%% var)',varExplained(2)));
+        if K==3
+            zlabel(sprintf('pc3 (%2.1f%% var)',varExplained(3)));
+        end
+    case 'PLOT:getTrajectoryColours'
+        % simple helper case to adaptively update plot colours for
+        % trajectory plots
+        C = varargin{1}; % number of conditions to get colours for
+        mapToUse = 'jet';
+        if numel(varargin)==2
+            mapToUse = varargin{2};
+        end
+        cmap      = colormap(mapToUse);
+        clrIdx    = floor(linspace(0,1,C).*size(cmap,1));
+        clrIdx(1) = 1;
+        clrs      = cmap(clrIdx,:);
+        varargout = {clrs};
     case 'PLOT:temporalWeights'
         a = varargin{1};
         b = varargin{2};
+        numWeights = length(a);
         imagesc([a;b]);
+        title(sprintf('dynamic and input\nfeature weights'));
+        % styalize
         colormap(flipud(hot));
         caxis([0 1.5]);
         xlabel('dataset');
-        set(gca,'ytick',[1 2],'yticklabel',{'input weight','dynamics weight'});
+        labels = {'dyanmic weight (a)','input weight (b)'};
+        set(gca,'ytick',[1 2],'yticklabel',labels,'yticklabelrotation',45,...
+            'xtick',[1:numWeights]);
         h = get(gca);
-        h.YAxis.FontSize = 14;
+        h.YAxis.FontSize = 10;
+        % label the weights in the coloured image.
+        text([1:numWeights,1:numWeights],...
+            [ones(1,numWeights)+0.25,ones(1,numWeights).*2.25],...
+            sprintfc('%1.2f',[a,b]),...
+            'Rotation',90);
         varargout = {h};
     case 'PLOT:tensorFitRatios'
         ratio = varargin{1};
@@ -1650,14 +1784,18 @@ switch what
             label = varargin{2};
         end
         plot(ratio,'o-k','LineWidth',1.5);
+        box off
         xlim([0.5 length(ratio)+0.5]);
+        %ylim([-1 1]);
         pca_lunch('PLOT:drawlines',1,[0.7 0.7 0.7]);
         xlabel('dataset');
         ylabel('log( r2 condition mode / r2 neuron mode )');
-        title('estimating the mode of each dataset');
+        title(sprintf('estimating the mode\nof the system'))
         if exist('label','var')
-            text(1:length(ratio),ratio,label);
+            text(1:length(ratio),ratio,label,'Rotation',-35);
         end
+        text(0.6,0.1,'\uparrow stronger dynamics');
+        text(0.6,-0.1,'\downarrow input-driven');
         
     case '0' % ------------ PCA examples with image reconstruction --------
     case 'IMG:reconstruction'
@@ -1777,22 +1915,6 @@ switch what
     % - explicit estimation of A from temporal data
     % - make A rotation-only, another one scaling-only
     % - case to calculate tangling matrix (more tangling for input-driven)
-    case 'MISC:calcTrajectory'
-        % case to calculate tangling of trajectory in PC/neural state space
-        X = varargin{1};  % data matrix [NxCxT]
-        % do PCA on condition-unfolding
-        [N,C,T] = size(X);
-        X = pca_lunch('TENSOR:prepData',X);
-        X = reshape(X,N,C*T)'; % [CTxN]
-        [U,S]   = svd(X,'econ');
-        % find enough PCs to account for 95% of variance in data:
-        varExplained = diag(S.^2);
-        varExplained = varExplained./sum(varExplained).*100;
-        %[~,numK]     = min(abs(varExplained-0.95));
-        numK  = 3;
-        % project data using these PCs
-        Xtraj = U(:,1:numK)*S(1:numK,1:numK);
-        varargout = {Xtraj,varExplained};
     case 'MISC:calcTangling'
         X = varargin{1}; % data matrix [NxCxT]
         Xtraj = pca_lunch('MISC:calcTrajectory',X);
@@ -1800,6 +1922,37 @@ switch what
         ddX   = dX(2:end,:) - dX(1:end-1,:);
         Q     = norm(ddX,2)/(norm(dX,2)+realmin);
         varargout = {Q};
+    case 'SIM:autoDynamics'
+        A  = varargin{1};
+        X1 = varargin{2};
+        T  = varargin{3};
+        
+        [N,C] = size(X1);
+        X = nan(N,C,T);
+        X(:,:,1) = X1;
+        for t = 1:T-1 
+            X(:,:,t+1) = A*X(:,:,t) + X(:,:,t);
+        end
+        varargout = {X};
+    case 'DO:test'
+        [U,A,B] = pca_lunch('SIM:temporalDataPrep');
+        % make A rotational transform
+        Ar = tril(A,-1);
+        Ar = Ar-Ar';
+        Ad = (A+A')./2;
+        % generate data with rotational temporal dynamics
+        Xr = pca_lunch('SIM:autoDynamics',Ar,U(:,:,1),size(U,3));
+        Xd = pca_lunch('SIM:autoDynamics',Ad,U(:,:,1),size(U,3));
+        Xa = pca_lunch('SIM:autoDynamics',Ar+(Ad./10),U(:,:,1),size(U,3));
+        
+        figure('Color',[1 1 1]);
+        subplot(1,3,1);
+        pca_lunch('PLOT:trajectory',squeeze(Xr(:,1,:)));
+        subplot(1,3,2);
+        pca_lunch('PLOT:trajectory',squeeze(Xd(:,1,:)));
+        subplot(1,3,3);
+        pca_lunch('PLOT:trajectory',squeeze(Xa(:,1,:)));   
+        
         
     otherwise
         error('%s : no such case',what)
