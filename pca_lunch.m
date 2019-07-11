@@ -1951,11 +1951,19 @@ switch what
         % plots trajectories of "neural" state in lower-dimensions (if data
         % is 3+ dimensions, then plots top 3, else, plots as many as
         % possible).
-        X = varargin{1}; % data matrix [NxCxT]
+        X   = varargin{1}; % data matrix [NxCxT]
+        if numel(varargin)==2
+            clr = varargin{2};
+        else
+            clr = {};
+        end
+        %clr = varargin{2};
         [Xtraj,varExplained] = pca_lunch('MISC:calcTrajectory',X);                  % to plot trajectory of conditions
         %[Xtraj,varExplained] = pca_lunch('MISC:calcTrajectory',permute(X,[2,1,3])); % to plot trajectory of neurons
         [K,C,T]  = size(Xtraj);
-        clr      = pca_lunch('PLOT:getTrajectoryColours',C);
+        if isempty(clr)
+            clr  = pca_lunch('PLOT:getTrajectoryColours',C);
+        end
         % plot each condition's trajectory through PC space
         markerSize = 8;
         hold on
@@ -1968,18 +1976,18 @@ switch what
                 plot3(0,0,0,'m*');   
                 % plot trajectory
                 Z = squeeze(Xtraj(3,c,:));
-                plot3(X,Y,Z,'Color',clr(c,:),'LineWidth',tjLineWidth);
+                plot3(X,Y,Z,'Color',clr{c},'LineWidth',tjLineWidth);
                 plot3(X(1),Y(1),Z(1),...
-                    'o','MarkerFaceColor',clr(c,:),'MarkerEdgeColor','k','MarkerSize',markerSize); % start state
-                plot3(X(end),Y(end),Z(end),'>','Color',clr(c,:),'MarkerSize',markerSize);          % end state
+                    'o','MarkerFaceColor',clr{c},'MarkerEdgeColor','k','MarkerSize',markerSize); % start state
+                plot3(X(end),Y(end),Z(end),'>','Color',clr{c},'MarkerSize',markerSize);          % end state
             elseif K==2
                 % mark origin
                 plot(0,0,'m+','MarkerSize',markerSize);   
                 % plot trajectory
-                plot(X,Y,'Color',clr(c,:),'LineWidth',tjLineWidth);
+                plot(X,Y,'Color',clr{c},'LineWidth',tjLineWidth);
                 plot(X(1),Y(1),...
-                    'o','MarkerFaceColor',clr(c,:),'MarkerEdgeColor','k','MarkerSize',markerSize); % start state
-                plot(X(end),Y(end),'>','Color',clr(c,:),'MarkerSize',markerSize);                  % end state
+                    'o','MarkerFaceColor',clr{c},'MarkerEdgeColor','k','MarkerSize',markerSize); % start state
+                plot(X(end),Y(end),'>','Color',clr{c},'MarkerSize',markerSize);                  % end state
             else
                 error('case made to plot only 2 or 3 dimenions.')
             end
@@ -2004,6 +2012,7 @@ switch what
         clrIdx    = floor(linspace(0,1,C).*size(cmap,1));
         clrIdx(1) = 1;
         clrs      = cmap(clrIdx,:);
+        clrs      = mat2cell(clrs,ones(C,1),3);
         varargout = {clrs};
     case 'PLOT:temporalWeights'
         a = varargin{1};
